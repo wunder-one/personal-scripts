@@ -4,7 +4,7 @@
 # This script creates properly configured directories under /opt/stacks
 # for Docker Compose services with standardized permissions.
 # create-stack - Create Docker stack directories with proper permissions
-#Save this as /usr/local/bin/create-stack and make it executable with chmod +x /usr/local/bin/create-stack
+# Save this as /usr/local/bin/create-stack and make it executable with chmod +x /usr/local/bin/create-stack
 
 # Function to display help information
 show_help() {
