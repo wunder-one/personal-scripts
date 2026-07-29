@@ -1,7 +1,7 @@
 [project]
 name = "personal-scripts"
 version = "0.1.0"
-description = "Add your description here"
+description = "personal scripts I use"
 readme = "README.md"
 requires-python = ">=3.14"
 dependencies = [

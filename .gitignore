@@ -7,7 +7,7 @@ scratch/
 *.swp
 *~
 
-# Python
+# Python / packaging (includes uv init defaults)
 __pycache__/
 *.py[cod]
 *$py.class
@@ -15,13 +15,28 @@ __pycache__/
 .Python
 build/
 dist/
+wheels/
 eggs/
 *.egg-info/
 *.egg
-.venv/
+
+# Virtual environments
+.venv
 venv/
 ENV/
+
+# uv
+# Keep uv.lock and .python-version tracked for reproducible installs.
+uv.lock
+.python-version
+
+# Local env / secrets
 .env
+.env.*
+!.env.example
+.envrc
+
+# Tooling caches
 .mypy_cache/
 .ruff_cache/
 .pytest_cache/
@@ -48,7 +63,5 @@ Desktop.ini
 *.sublime-workspace
 *.code-workspace
 
-# Logs / local env
+# Logs
 *.log
-.env.*
-!.env.example
