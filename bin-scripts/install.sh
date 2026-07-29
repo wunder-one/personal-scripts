@@ -108,3 +108,14 @@ if [[ "$on_path" == false ]]; then
   echo "  echo 'export PATH=\"${target_bin}:\$PATH\"' >> ${rc_file}"
   echo "  source ${rc_file}"
 fi
+
+if ! command -v uv >/dev/null 2>&1; then
+  echo
+  echo "Warning: uv was not found on PATH."
+  echo "Some scripts (like get-ps3-game-update) use a uv shebang and will not run without it."
+  echo "Install uv, then re-open your shell:"
+  echo
+  echo "  curl -LsSf https://astral.sh/uv/install.sh | sh"
+  echo
+  echo "Docs: https://docs.astral.sh/uv/getting-started/installation/"
+fi
