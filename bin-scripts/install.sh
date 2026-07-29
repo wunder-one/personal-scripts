@@ -84,7 +84,8 @@ for script in "$script_dir"/*; do
   name="$(basename "$script")"
   [[ "$name" == "$install_script_name" || "$name" == "README.md" ]] && continue
 
-  link_name="${name%.sh}"
+  link_name="${name%.*}"
+  [[ -n "$link_name" ]] || link_name="$name"
   ln -sf "$script" "$target_bin/$link_name"
   chmod +x "$script"
   echo "linked $link_name -> $script"
