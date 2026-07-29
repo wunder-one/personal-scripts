@@ -9,7 +9,7 @@
 
 Reads the installed APP_VER from RPCS3's PARAM.SFO, downloads only newer
 update .pkg files from Sony's CDN, then installs them in order with:
-  rpcs3 --no-gui --installpkg <file.pkg>
+  rpcs3 --headless --installpkg <file.pkg>
 
 In download+install mode, packages are staged under a temp directory and
 removed after every install succeeds. With --download-only, they are kept
@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import resource
 import shlex
 import shutil
 import struct
@@ -267,18 +268,90 @@ def find_rpcs3_command(explicit: str | None) -> list[str]:
     )
 
 
-def install_pkg(rpcs3_cmd: list[str], pkg_path: Path) -> None:
-    cmd = [*rpcs3_cmd, "--no-gui", "--installpkg", str(pkg_path)]
+def rpcs3_lock_path() -> Path:
+    return Path.home() / ".cache/rpcs3/RPCS3.buf"
+
+
+def clear_stale_rpcs3_lock() -> None:
+    """Remove RPCS3.buf when no rpcs3 process is running (leftover from crashes)."""
+    lock = rpcs3_lock_path()
+    if not lock.exists():
+        return
+    probe = subprocess.run(
+        ["pgrep", "-fi", "rpcs3"],
+        check=False,
+        capture_output=True,
+    )
+    if probe.returncode == 0:
+        return
+    try:
+        lock.unlink()
+        print(f"Removed stale RPCS3 lock: {lock}", file=sys.stderr)
+    except OSError as exc:
+        print(f"Warning: could not remove stale RPCS3 lock {lock}: {exc}", file=sys.stderr)
+
+
+def _disable_core_dumps() -> None:
+    """Prevent systemd-coredump desktop notifications from headless teardown aborts."""
+    try:
+        resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
+    except (ValueError, OSError):
+        pass
+
+
+def install_pkg(
+    rpcs3_cmd: list[str],
+    pkg_path: Path,
+    *,
+    expected_version: str,
+    hdd0: Path | None,
+    game_id: str,
+) -> None:
+    # --no-gui is rejected for installs ("Cannot perform installation in no-gui
+    # mode!"); --headless is the supported non-interactive path (RPCS3 #18719).
+    clear_stale_rpcs3_lock()
+    cmd = [*rpcs3_cmd, "--headless", "--installpkg", str(pkg_path)]
     print(f"Installing: {' '.join(cmd)}", file=sys.stderr)
     try:
-        result = subprocess.run(cmd, check=False)
+        result = subprocess.run(
+            cmd,
+            check=False,
+            capture_output=True,
+            text=True,
+            preexec_fn=_disable_core_dumps,
+        )
     except OSError as exc:
         raise SystemExit(f"Failed to launch RPCS3: {exc}") from exc
 
-    if result.returncode != 0:
+    # Headless --installpkg often succeeds then aborts during teardown (exit 143 /
+    # typemap assert). Trust the on-disk APP_VER when we can read it.
+    if hdd0 is not None:
+        current, _ = installed_version(hdd0, game_id)
+        if parse_version(current) >= parse_version(expected_version):
+            if result.returncode != 0:
+                print(
+                    f"Warning: RPCS3 exited {result.returncode} after installing "
+                    f"{expected_version} (teardown abort suppressed); "
+                    f"PARAM.SFO is {current}.",
+                    file=sys.stderr,
+                )
+            return
+        details = (result.stderr or result.stdout or "").strip()
+        if details:
+            print(details, file=sys.stderr)
         raise SystemExit(
             f"RPCS3 install failed (exit {result.returncode}) for {pkg_path}. "
-            "Headless --installpkg needs a recent RPCS3 build; try upgrading or install via the GUI."
+            f"Expected APP_VER >= {expected_version}, still at {current}."
+        )
+
+    if result.returncode != 0:
+        details = (result.stderr or result.stdout or "").strip()
+        if details:
+            print(details, file=sys.stderr)
+        raise SystemExit(
+            f"RPCS3 install failed (exit {result.returncode}) for {pkg_path}. "
+            "Close any running RPCS3 instance, remove a stale "
+            "~/.cache/rpcs3/RPCS3.buf lock if present, or install via the GUI."
         )
 
 
@@ -322,6 +395,7 @@ def main() -> None:
     game_id = args.game_id.strip().upper()
 
     rpcs3_dir = find_rpcs3_dir(args.rpcs3_dir)
+    hdd0: Path | None = None
     if rpcs3_dir is None:
         print(
             "Warning: RPCS3 dir not found; assuming installed version "
@@ -412,7 +486,7 @@ def main() -> None:
             dest_dir.mkdir(parents=True, exist_ok=True)
 
         print(f"Output directory: {dest_dir}", file=sys.stderr)
-        saved: list[Path] = []
+        saved: list[tuple[str, Path]] = []
 
         try:
             for index, package in enumerate(packages, start=1):
@@ -427,7 +501,7 @@ def main() -> None:
                     if not sha1sum or pkg_digest_sha1(dest).lower() == sha1sum.lower():
                         print(f"Already downloaded: {dest}", file=sys.stderr)
                         print(dest)
-                        saved.append(dest)
+                        saved.append((version, dest))
                         continue
 
                 print(f"Saving to: {dest}", file=sys.stderr)
@@ -439,7 +513,7 @@ def main() -> None:
 
                 print(f"Done: {dest}", file=sys.stderr)
                 print(dest)
-                saved.append(dest)
+                saved.append((version, dest))
 
             print(f"Downloaded {len(saved)} package(s).", file=sys.stderr)
 
@@ -448,9 +522,15 @@ def main() -> None:
 
             rpcs3_cmd = find_rpcs3_command(args.rpcs3_bin)
             print(f"RPCS3: {' '.join(rpcs3_cmd)}", file=sys.stderr)
-            for index, pkg_path in enumerate(saved, start=1):
-                print(f"Install [{index}/{len(saved)}]", file=sys.stderr)
-                install_pkg(rpcs3_cmd, pkg_path)
+            for index, (version, pkg_path) in enumerate(saved, start=1):
+                print(f"Install [{index}/{len(saved)}] version {version}", file=sys.stderr)
+                install_pkg(
+                    rpcs3_cmd,
+                    pkg_path,
+                    expected_version=version,
+                    hdd0=hdd0,
+                    game_id=game_id,
+                )
 
             print(f"Installed {len(saved)} package(s).", file=sys.stderr)
         except BaseException:
